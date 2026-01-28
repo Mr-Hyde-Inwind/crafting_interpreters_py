@@ -1,0 +1,28 @@
+[project]
+name = "crafting-interpreters-py"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Hermit",email = "persona_gazer@outlook.com"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+]
+
+[project.scripts]
+run = 'crafting_interpreters_py.main:main'
+
+[project.urls]
+homepage = "https://github.com/Mr-Hyde-Inwind/crafting_interpreters_py"
+repository = "https://github.com/Mr-Hyde-Inwind/crafting_interpreters_py"
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.2,<10.0.0)"
+]
