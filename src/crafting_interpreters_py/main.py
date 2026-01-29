@@ -1,7 +1,9 @@
 import argparse
+import operator
 from pathlib import Path
 from enum import Enum, auto
 from typing import List, Dict
+from abc import ABC, abstractmethod
 
 class TokenType(Enum):
     LEFT_PAREN = auto(); RIGHT_PAREN = auto()
@@ -48,8 +50,15 @@ def report(line: int, where: str, message: str) -> None:
     had_error = True
 
 
-def error(line: int, message: str) -> None:
-    report(line, "", message)
+def error(token_or_line: Token|int, message: str) -> None:
+    if isinstance(token_or_line, int):
+        report(token_or_line, "", message)
+    else:
+        assert isinstance(token_or_line, Token)
+        if token_or_line.token_type == TokenType.EOF:
+            report(token_or_line.line, " at end", message)
+        else:
+            report(token_or_line.line, f" at '{token_or_line.lexeme}'", message)
 
 class Scanner():
     keywords: Dict[str, TokenType] = {
@@ -201,7 +210,207 @@ class Scanner():
         self.tokens.append(Token(TokenType.EOF, "", None, self.line))
         return self.tokens
 
+class Visitor(ABC):
+    @abstractmethod
+    def visit_literal(self, expression): pass
+    @abstractmethod
+    def visit_binary(self, expression): pass
+    @abstractmethod
+    def visit_grouping(self, expression): pass
+    @abstractmethod
+    def visit_unary(self, expression): pass
 
+class Expr(ABC):
+    @abstractmethod
+    def accept(self, visitor: Visitor): pass
+
+class Binary(Expr):
+    def __init__(self, left: Expr, operator: Token, right: Expr):
+        self.left = left
+        self.operator = operator
+        self.right = right
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_binary(self)
+
+class Literal(Expr):
+    def __init__(self, value):
+        self.value = value
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_literal(self)
+
+class Grouping(Expr):
+    def __init__(self, expression: Expr):
+        self.expression = expression
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_grouping(self)
+
+class Unary(Expr):
+    def __init__(self, operator: Token, right: Expr):
+        self.operator = operator
+        self.right = right
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_unary(self)
+
+class AstPrinter(Visitor):
+    def print(self, expression: Expr):
+        return expression.accept(self)
+
+    def parenthesize(self, name: str, expressions: List[Expr]):
+        str_list = [expr.accept(self) for expr in expressions]
+        return f'({name} {" ".join(str_list)})'
+
+    def visit_literal(self, expression: Literal):
+        if expression.value == None:
+            return "nil"
+        return str(expression.value)
+    
+    def visit_grouping(self, expression:Grouping):
+        return self.parenthesize("group", [expression.expression])
+
+    def visit_binary(self, expression: Binary):
+        return self.parenthesize(expression.operator.lexeme,
+                                 [expression.left, expression.right])
+
+    def visit_unary(self, expression: Unary):
+        return self.parenthesize(expression.operator.lexeme, [expression.right])
+
+class Parser():
+    class ParserError(RuntimeError):
+        pass
+
+    def __init__(self, tokens: List[Token]):
+        self.tokens = tokens
+        self.current = 0
+
+    def peek(self) -> Token:
+        return self.tokens[self.current]
+
+    def previous(self) -> Token:
+        return self.tokens[self.current - 1]
+
+    def is_at_end(self) -> bool:
+        return self.peek().token_type == TokenType.EOF
+
+    def advance(self) -> Token:
+        if not self.is_at_end():
+            self.current += 1
+        return self.previous()
+
+    def check(self, type: TokenType) -> bool:
+        if self.is_at_end():
+            return False
+        return self.peek().token_type == type
+
+    def match(self, *types) -> bool:
+        for type in types:
+            if self.check(type):
+                self.advance()
+                return True
+        return False
+
+    def error(self, token: Token, message: str) -> ParserError:
+        error(token, message)
+        return Parser.ParserError()
+
+    def consume(self, type: TokenType, message: str):
+        if self.check(type):
+            return self.advance()
+        raise self.error(self.peek(), message)
+
+    def expression(self) -> Expr:
+        return self.equality()
+
+    def equality(self) -> Expr:
+        expr: Expr = self.comparison()
+
+        while self.match(TokenType.BANG, TokenType.BANG_EQUAL):
+            operator: Token = self.previous()
+            right: Expr = self.comparison()
+            expr = Binary(expr, operator, right)
+
+        return expr
+
+    def comparison(self) -> Expr:
+        expr: Expr = self.term()
+        while self.match(TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL):
+            operator: Token = self.previous()
+            right: Expr = self.term()
+            expr = Binary(expr, operator, right)
+
+        return expr
+    
+    def term(self) -> Expr:
+        expr: Expr = self.factor()
+        while self.match(TokenType.PLUS, TokenType.MINUS):
+            operator: Token = self.previous()
+            right: Expr = self.factor()
+            expr = Binary(expr, operator, right)
+
+        return expr
+
+    def factor(self) -> Expr:
+        expr: Expr = self.unary()
+        while self.match(TokenType.SLASH, TokenType.STAR):
+            operator: Token = self.previous()
+            right: Expr = self.unary()
+            expr = Binary(expr, operator, right)
+
+        return expr
+
+    def unary(self) -> Expr:
+        if self.match(TokenType.MINUS, TokenType.BANG):
+            operator: Token = self.previous()
+            right: Expr = self.unary()
+            return Unary(operator, right)
+        
+        return self.primary()
+
+    def primary(self) -> Expr:
+        if self.match(TokenType.TRUE):
+            return Literal(True)
+        if self.match(TokenType.FALSE):
+            return Literal(False)
+        if self.match(TokenType.NIL):
+            return Literal(None)
+
+        if self.match(TokenType.NUMBER, TokenType.STRING):
+            return Literal(self.previous().literal)
+
+        if self.match(TokenType.LEFT_PAREN):
+            expr: Expr = self.expression()
+            self.consume(TokenType.RIGHT_PAREN, "Expect ')' after expression.")
+            return Grouping(expr)
+
+        raise self.error(self.peek(), "Expect expression.")
+
+    def synchronize(self) -> None:
+        self.advance()
+
+        while not self.is_at_end():
+            if self.previous().token_type == TokenType.SEMICOLON:
+                return
+
+            match self.peek().token_type:
+                case TokenType.CLASS: return
+                case TokenType.FUN: return
+                case TokenType.VAR: return
+                case TokenType.FOR: return
+                case TokenType.IF: return
+                case TokenType.WHILE: return
+                case TokenType.PRINT: return
+                case TokenType.RETRUN: return
+            
+            self.advance()
+
+    def parse(self) -> Expr|None:
+        try:
+            return self.expression()
+        except Parser.ParserError:
+            return None
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -216,14 +425,22 @@ def run(source: str) -> None:
     scanner: Scanner = Scanner(source)
     tokens: List[Token] = scanner.scan()
 
-    for token in tokens:
-        print(token)
+    parser: Parser = Parser(tokens)
+    expression: Expr|None = parser.parse()
+
+    if had_error:
+        return
+
+    assert isinstance(expression, Expr)
+    print(AstPrinter().print(expression))
 
 
 def run_prompt() -> None:
     print("Run REPL...")
 
     while (True):
+        global had_error
+        had_error = False
         line: str = input("> ")
         if not line:
             break
@@ -239,5 +456,15 @@ def main() -> None:
     else:
         run_file(run_args.file)
 
+def debug() -> None:
+    expression: Expr = Binary(
+        Unary(Token(TokenType.MINUS, '-', None, 1), Literal(123)),
+        Token(TokenType.STAR, '*', None, 1),
+        Grouping(Literal(45.67))
+    )
+
+    print(AstPrinter().print(expression))
+
 if __name__ == '__main__':
-    main()
+    debug()
+    # main()
