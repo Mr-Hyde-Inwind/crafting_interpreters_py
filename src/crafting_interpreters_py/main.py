@@ -4,6 +4,8 @@ from pathlib import Path
 from enum import Enum, auto
 from typing import List, Dict
 from abc import ABC, abstractmethod
+from . import Expr
+from . import Stmt
 
 class TokenType(Enum):
     LEFT_PAREN = auto(); RIGHT_PAREN = auto()
@@ -44,11 +46,17 @@ class Token():
         return f'{self.token_type} {self.lexeme} {self.literal}'
 
 had_error = False
+had_runtimeerror = False
+
 def report(line: int, where: str, message: str) -> None:
     print(f'[line {line}] Error {where}: {message}')
     global had_error
     had_error = True
 
+def runtime_error(err: RuntimeException):
+    print(f'{str(err)}\n[line {err.token.line}]')
+    global had_runtimeerror
+    had_runtimeerror = True
 
 def error(token_or_line: Token|int, message: str) -> None:
     if isinstance(token_or_line, int):
@@ -210,52 +218,7 @@ class Scanner():
         self.tokens.append(Token(TokenType.EOF, "", None, self.line))
         return self.tokens
 
-class Visitor(ABC):
-    @abstractmethod
-    def visit_literal(self, expression): pass
-    @abstractmethod
-    def visit_binary(self, expression): pass
-    @abstractmethod
-    def visit_grouping(self, expression): pass
-    @abstractmethod
-    def visit_unary(self, expression): pass
-
-class Expr(ABC):
-    @abstractmethod
-    def accept(self, visitor: Visitor): pass
-
-class Binary(Expr):
-    def __init__(self, left: Expr, operator: Token, right: Expr):
-        self.left = left
-        self.operator = operator
-        self.right = right
-
-    def accept(self, visitor: Visitor):
-        return visitor.visit_binary(self)
-
-class Literal(Expr):
-    def __init__(self, value):
-        self.value = value
-
-    def accept(self, visitor: Visitor):
-        return visitor.visit_literal(self)
-
-class Grouping(Expr):
-    def __init__(self, expression: Expr):
-        self.expression = expression
-
-    def accept(self, visitor: Visitor):
-        return visitor.visit_grouping(self)
-
-class Unary(Expr):
-    def __init__(self, operator: Token, right: Expr):
-        self.operator = operator
-        self.right = right
-
-    def accept(self, visitor: Visitor):
-        return visitor.visit_unary(self)
-
-class AstPrinter(Visitor):
+class AstPrinter(Expr.Visitor):
     def print(self, expression: Expr):
         return expression.accept(self)
 
@@ -263,19 +226,19 @@ class AstPrinter(Visitor):
         str_list = [expr.accept(self) for expr in expressions]
         return f'({name} {" ".join(str_list)})'
 
-    def visit_literal(self, expression: Literal):
+    def visit_literal(self, expression: Expr.Literal):
         if expression.value == None:
             return "nil"
         return str(expression.value)
     
-    def visit_grouping(self, expression:Grouping):
+    def visit_grouping(self, expression: Expr.Grouping):
         return self.parenthesize("group", [expression.expression])
 
-    def visit_binary(self, expression: Binary):
+    def visit_binary(self, expression: Expr.Binary):
         return self.parenthesize(expression.operator.lexeme,
                                  [expression.left, expression.right])
 
-    def visit_unary(self, expression: Unary):
+    def visit_unary(self, expression: Expr.Unary):
         return self.parenthesize(expression.operator.lexeme, [expression.right])
 
 class Parser():
@@ -330,7 +293,7 @@ class Parser():
         while self.match(TokenType.BANG, TokenType.BANG_EQUAL):
             operator: Token = self.previous()
             right: Expr = self.comparison()
-            expr = Binary(expr, operator, right)
+            expr = Expr.Binary(expr, operator, right)
 
         return expr
 
@@ -339,7 +302,7 @@ class Parser():
         while self.match(TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL):
             operator: Token = self.previous()
             right: Expr = self.term()
-            expr = Binary(expr, operator, right)
+            expr = Expr.Binary(expr, operator, right)
 
         return expr
     
@@ -348,7 +311,7 @@ class Parser():
         while self.match(TokenType.PLUS, TokenType.MINUS):
             operator: Token = self.previous()
             right: Expr = self.factor()
-            expr = Binary(expr, operator, right)
+            expr = Expr.Binary(expr, operator, right)
 
         return expr
 
@@ -357,7 +320,7 @@ class Parser():
         while self.match(TokenType.SLASH, TokenType.STAR):
             operator: Token = self.previous()
             right: Expr = self.unary()
-            expr = Binary(expr, operator, right)
+            expr = Expr.Binary(expr, operator, right)
 
         return expr
 
@@ -365,25 +328,25 @@ class Parser():
         if self.match(TokenType.MINUS, TokenType.BANG):
             operator: Token = self.previous()
             right: Expr = self.unary()
-            return Unary(operator, right)
+            return Expr.Unary(operator, right)
         
         return self.primary()
 
     def primary(self) -> Expr:
         if self.match(TokenType.TRUE):
-            return Literal(True)
+            return Expr.Literal(True)
         if self.match(TokenType.FALSE):
-            return Literal(False)
+            return Expr.Literal(False)
         if self.match(TokenType.NIL):
-            return Literal(None)
+            return Expr.Literal(None)
 
         if self.match(TokenType.NUMBER, TokenType.STRING):
-            return Literal(self.previous().literal)
+            return Expr.Literal(self.previous().literal)
 
         if self.match(TokenType.LEFT_PAREN):
             expr: Expr = self.expression()
             self.consume(TokenType.RIGHT_PAREN, "Expect ')' after expression.")
-            return Grouping(expr)
+            return Expr.Grouping(expr)
 
         raise self.error(self.peek(), "Expect expression.")
 
@@ -406,11 +369,146 @@ class Parser():
             
             self.advance()
 
-    def parse(self) -> Expr|None:
+    def print_statement(self):
+        value: Expr.Expr = self.expression()
+        self.consume(TokenType.SEMICOLON, "Expect ';' after value.")
+        return Stmt.Print(value)
+
+    def expression_statement(self):
+        expr: Expr.Expr = self.expression()
+        self.consume(TokenType.SEMICOLON, "Expect ';' after expression.")
+        return Stmt.Expression(expr)
+
+    def statement(self):
+        if self.match(TokenType.PRINT):
+            return self.print_statement()
+        else:
+            return self.expression_statement()
+
+    def parse(self) -> List[Stmt]:
+        statements = []
+        while not self.is_at_end():
+            statements.append(self.statement())
+
+        return statements
+        
+class RuntimeException(RuntimeError):
+    def __init__(self, token: Token, message: str):
+        super().__init__(message)
+        self.token = token
+        
+class Interpreter(Expr.Visitor, Stmt.Visitor):
+    def evaluate(self, expression: Expr):
+        return expression.accept(self)
+
+    def execute(self, statement: Stmt.Stmt):
+        statement.accept(self)
+
+    def interprte(self, statements: List[Stmt.Stmt]):
         try:
-            return self.expression()
-        except Parser.ParserError:
-            return None
+            for statement in statements:
+                self.execute(statement)
+        except RuntimeException as error:
+            runtime_error(error)
+
+    def is_truth(self, obj):
+        if obj == None:
+            return False
+        if isinstance(obj, bool):
+            return obj
+        return True
+
+    def is_equal(self, a, b):
+        if a == None and b == None:
+            return True
+        if a == None:
+            return False
+        return a == b
+
+    def check_number_operand(operator: Token, operand):
+        if isinstance(operand, float):
+            return
+        raise RuntimeException(operator, "Operand must be a number.")
+
+    def check_number_operands(self, operator: Token, left, right):
+        if isinstance(left, float) and isinstance(right, float):
+            return
+        raise RuntimeException(operator, "Operands must be numbers.")
+
+    def stringify(self, obj):
+        if obj == None:
+            return "nil"
+        if isinstance(obj, float):
+            if str(obj).endswith('.0'):
+                return str(obj)[:-2]
+        return str(obj)
+    
+    def visit_literal(self, expression: Expr.Literal):
+        return expression.value
+
+    def visit_grouping(self, expression: Expr.Grouping):
+        return self.evaluate(expression.expression)
+
+    def visit_unary(self, expression: Expr.Unary):
+        right = self.evaluate(expression.right)
+
+        match expression.operator.token_type:
+            case TokenType.MINUS:
+                self.check_number_operand(expression.operator, right)
+                return -1.0 * float(right)
+            case TokenType.BANG:
+                return not self.is_truth(right)
+
+        return None
+
+    def visit_binary(self, expression: Expr.Binary):
+        left = self.evaluate(expression.left)
+        right = self.evaluate(expression.right)
+
+        match expression.operator.token_type:
+            case TokenType.MINUS:
+                self.check_number_operands(expression.operator, left, right)
+                return float(left) - float(right)
+            case TokenType.SLASH:
+                self.check_number_operands(expression.operator, left, right)
+                return float(left) / float(right)
+            case TokenType.STAR:
+                self.check_number_operands(expression.operator, left, right)
+                return float(left) * float(right)
+            case TokenType.PLUS:
+                if isinstance(left, float) and isinstance(right, float):
+                    return float(left) + float(right)
+                if isinstance(left, str) and isinstance(right, str):
+                    return str(left) + str(right)
+            case TokenType.GREATER:
+                self.check_number_operands(expression.operator, left, right)
+                return float(left) > float(right)
+            case TokenType.GREATER_EQUAL:
+                self.check_number_operands(expression.operator, left, right)
+                return float(left) >= float(right)
+            case TokenType.LESS:
+                self.check_number_operands(expression.operator, left, right)
+                return float(left) < float(right)
+            case TokenType.LESS_EQUAL:
+                self.check_number_operands(expression.operator, left, right)
+                return float(left) <= float(right)
+            case TokenType.BANG_EQUAL:
+                return not self.is_equal(left, right)
+            case TokenType.EQUAL_EQUAL:
+                return self.is_equal(left, right)
+
+        assert False, f"{str(expression.operator)}"
+
+        return None
+
+    def visit_expression_stmt(self, stmt: Stmt.Expression):
+        self.evaluate(stmt.expression)
+        return None
+
+    def visit_print_stmt(self, stmt: Stmt.Print):
+        value = self.evaluate(stmt.expression)
+        print(self.stringify(value))
+        return None
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -426,14 +524,15 @@ def run(source: str) -> None:
     tokens: List[Token] = scanner.scan()
 
     parser: Parser = Parser(tokens)
-    expression: Expr|None = parser.parse()
+    statements: List[Stmt.Stmt] = parser.parse()
+
+    interpreter: Interpreter = Interpreter()
+    interpreter.interprte(statements)
 
     if had_error:
-        return
-
-    assert isinstance(expression, Expr)
-    print(AstPrinter().print(expression))
-
+        exit(65)
+    if had_runtimeerror:
+        exit(70)
 
 def run_prompt() -> None:
     print("Run REPL...")
@@ -441,6 +540,8 @@ def run_prompt() -> None:
     while (True):
         global had_error
         had_error = False
+        global had_runtimeerror
+        had_runtimeerror = False
         line: str = input("> ")
         if not line:
             break
@@ -457,10 +558,10 @@ def main() -> None:
         run_file(run_args.file)
 
 def debug() -> None:
-    expression: Expr = Binary(
-        Unary(Token(TokenType.MINUS, '-', None, 1), Literal(123)),
+    expression: Expr.Expr = Expr.Binary(
+        Expr.Unary(Token(TokenType.MINUS, '-', None, 1), Expr.Literal(123)),
         Token(TokenType.STAR, '*', None, 1),
-        Grouping(Literal(45.67))
+        Expr.Grouping(Expr.Literal(45.67))
     )
 
     print(AstPrinter().print(expression))
