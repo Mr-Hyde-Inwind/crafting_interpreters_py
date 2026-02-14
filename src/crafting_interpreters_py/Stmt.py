@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import List
 from . import Expr
 
 class Visitor(ABC):
@@ -35,3 +36,9 @@ class Var(Stmt):
     def accept(self, visitor: Visitor):
         return visitor.visit_var_stmt(self)
         
+class Block(Stmt):
+    def __init__(self, statements: List[Stmt]):
+        self.statements = statements
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_block(self)

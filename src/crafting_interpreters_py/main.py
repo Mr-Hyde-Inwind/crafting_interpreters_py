@@ -424,9 +424,18 @@ class Parser():
         self.consume(TokenType.SEMICOLON, "Expect ';' after expression.")
         return Stmt.Expression(expr)
 
+    def block(self) -> List[Stmt]:
+        statements: List[Stmt] = []
+        while not self.check(TokenType.RIGHT_BRACE):
+            statements.append(self.declaration())
+        self.consume(TokenType.RIGHT_BRACE, "Expect '}' after block.")
+        return statements
+
     def statement(self):
         if self.match(TokenType.PRINT):
             return self.print_statement()
+        elif self.match(TokenType.LEFT_BRACE):
+            return Stmt.Block(self.block())
         else:
             return self.expression_statement()
 
@@ -593,6 +602,19 @@ class Interpreter(Expr.Visitor, Stmt.Visitor):
             value = self.evaluate(stmt.initializer)
 
         self.environment.define(stmt.name.lexeme, value)
+        return None
+
+    def execute_block(self, statements: List[Stmt.Stmt], environment: Environment):
+        previous: Environment = self.environment
+        try:
+            self.environment = environment
+            for statement in statements:
+                self.execute(statement)
+        finally:
+            self.environment = previous
+
+    def visit_block(self, stmt: Stmt.Block):
+        self.execute_block(stmt.statements, Environment(self.environment))
         return None
 
 def get_args():
