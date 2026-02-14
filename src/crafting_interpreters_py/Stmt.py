@@ -9,6 +9,7 @@ class Visitor(ABC):
     def visit_print_stmt(self, statement: Print): pass
 
 class Stmt(ABC):
+    @abstractmethod
     def accept(self, visitor: Visitor): pass
 
 class Expression(Stmt):
@@ -24,4 +25,13 @@ class Print(Stmt):
 
     def accept(self, visitor: Visitor):
         return visitor.visit_print_stmt(self)
+
+
+class Var(Stmt):
+    def __init__(self, name, initializer):
+        self.name = name
+        self.initializer = initializer
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_var_stmt(self)
         

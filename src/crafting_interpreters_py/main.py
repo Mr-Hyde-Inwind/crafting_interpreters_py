@@ -68,6 +68,33 @@ def error(token_or_line: Token|int, message: str) -> None:
         else:
             report(token_or_line.line, f" at '{token_or_line.lexeme}'", message)
 
+class Environment():
+    def __init__(self, enclosing = None):
+        self.values = dict()
+        self.enclosing = enclosing
+
+    def define(self, name: str, value: object):
+        self.values[name] = value
+
+    def assign(self, name: Token, value: object):
+        if name.lexeme in self.values:
+            self.values[name.lexeme] = value
+            return
+
+        if self.enclosing:
+            self.enclosing.assign(name, value)
+            return
+
+        raise RuntimeException(name, f'Undefined variable "{name.lexeme}".')
+
+    def get(self, name_token: Token):
+        if name_token.lexeme in self.values:
+            return self.values[name_token.lexeme]
+        elif self.enclosing:
+            return self.enclosing.get(name)
+        else:
+            raise RuntimeException(name_token, f'Undefined variable {name_token.lexeme}.')
+
 class Scanner():
     keywords: Dict[str, TokenType] = {
         "and":      TokenType.AND,
@@ -285,7 +312,22 @@ class Parser():
         raise self.error(self.peek(), message)
 
     def expression(self) -> Expr:
+        return self.assignment()
         return self.equality()
+
+    def assignment(self) -> Expr:
+        expr: Expr = self.equality()
+        if self.match(TokenType.EQUAL):
+            equals: Token = self.previous()
+            value: Expr = self.assignment()
+
+            if isinstance(expr, Expr.Variable):
+                name: Token = expr.name
+                return Expr.Assignment(name, value)
+
+            self.error(equals, "Invalid assignment target.")
+
+        return expr
 
     def equality(self) -> Expr:
         expr: Expr = self.comparison()
@@ -343,6 +385,9 @@ class Parser():
         if self.match(TokenType.NUMBER, TokenType.STRING):
             return Expr.Literal(self.previous().literal)
 
+        if self.match(TokenType.IDENTIFIER):
+            return Expr.Variable(self.previous())
+
         if self.match(TokenType.LEFT_PAREN):
             expr: Expr = self.expression()
             self.consume(TokenType.RIGHT_PAREN, "Expect ')' after expression.")
@@ -385,10 +430,31 @@ class Parser():
         else:
             return self.expression_statement()
 
+    def var_declaration(self) -> Stmt.Stmt:
+        name: Token = self.consume(TokenType.IDENTIFIER, "Expect variable name.")
+
+        initializer: Expr.Expr = None
+        if self.match(TokenType.EQUAL):
+            initializer = self.expression()
+
+        self.consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.")
+        return Stmt.Var(name, initializer)
+
+    def declaration(self):
+        try:
+            if self.match(TokenType.VAR):
+                return self.var_declaration()
+            else:
+                return self.statement()
+        except Parser.ParserError as err:
+            self.synchronize()
+            return None
+
     def parse(self) -> List[Stmt]:
         statements = []
         while not self.is_at_end():
-            statements.append(self.statement())
+            statements.append(self.declaration())
+            #statements.append(self.statement())
 
         return statements
         
@@ -398,13 +464,16 @@ class RuntimeException(RuntimeError):
         self.token = token
         
 class Interpreter(Expr.Visitor, Stmt.Visitor):
+    def __init__(self):
+        self.environment = Environment()
+    
     def evaluate(self, expression: Expr):
         return expression.accept(self)
 
     def execute(self, statement: Stmt.Stmt):
         statement.accept(self)
 
-    def interprte(self, statements: List[Stmt.Stmt]):
+    def interprete(self, statements: List[Stmt.Stmt]):
         try:
             for statement in statements:
                 self.execute(statement)
@@ -501,6 +570,14 @@ class Interpreter(Expr.Visitor, Stmt.Visitor):
 
         return None
 
+    def visit_variable(self, expression: Expr.Variable):
+        return self.environment.get(expression.name)
+
+    def visit_assignment(self, expression: Expr.Assignment):
+        value: object = self.evaluate(expression.value)
+        self.environment.assign(expression.name, value)
+        return value
+
     def visit_expression_stmt(self, stmt: Stmt.Expression):
         self.evaluate(stmt.expression)
         return None
@@ -508,6 +585,14 @@ class Interpreter(Expr.Visitor, Stmt.Visitor):
     def visit_print_stmt(self, stmt: Stmt.Print):
         value = self.evaluate(stmt.expression)
         print(self.stringify(value))
+        return None
+
+    def visit_var_stmt(self, stmt: Stmt.Var):
+        value = None
+        if stmt.initializer != None:
+            value = self.evaluate(stmt.initializer)
+
+        self.environment.define(stmt.name.lexeme, value)
         return None
 
 def get_args():
@@ -519,15 +604,14 @@ def get_args():
     args = parser.parse_args()
     return args
 
-def run(source: str) -> None:
+def run(interpreter: Interpreter, source: str) -> None:
     scanner: Scanner = Scanner(source)
     tokens: List[Token] = scanner.scan()
 
     parser: Parser = Parser(tokens)
     statements: List[Stmt.Stmt] = parser.parse()
 
-    interpreter: Interpreter = Interpreter()
-    interpreter.interprte(statements)
+    interpreter.interprete(statements)
 
     if had_error:
         exit(65)
@@ -536,7 +620,8 @@ def run(source: str) -> None:
 
 def run_prompt() -> None:
     print("Run REPL...")
-
+    
+    interpreter: Interpreter = Interpreter()
     while (True):
         global had_error
         had_error = False
@@ -545,7 +630,7 @@ def run_prompt() -> None:
         line: str = input("> ")
         if not line:
             break
-        run(line)
+        run(interpreter, line)
 
 def run_file(src: str | Path):
     print(f"Run source code with file: {src}")

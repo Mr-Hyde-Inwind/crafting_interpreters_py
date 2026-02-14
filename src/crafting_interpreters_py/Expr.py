@@ -9,6 +9,10 @@ class Visitor(ABC):
     def visit_grouping(self, expression): pass
     @abstractmethod
     def visit_unary(self, expression): pass
+    @abstractmethod
+    def visit_variable(self, expression): pass
+    @abstractmethod
+    def visit_assignment(self, expression): pass
 
 class Expr(ABC):
     @abstractmethod
@@ -45,3 +49,17 @@ class Unary(Expr):
     def accept(self, visitor: Visitor):
         return visitor.visit_unary(self)
     
+class Variable(Expr):
+    def __init__(self, name):
+        self.name = name
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_variable(self)
+
+class Assignment(Expr):
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_assignment(self)
