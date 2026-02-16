@@ -238,6 +238,14 @@ class Scanner():
                     error(self.line, "Unexpected character: {c}")
 
     def scan(self) -> List[Token]:
+        """Scan the source code and return Token list
+
+        Iter the string of source code, resolving to Token object.
+        Stop scanning when touch the end of source code and append EOF Token to the list
+        
+        Returns:
+            List[Token]: list of tokens scanned from raw string.
+        """
         while (not self.is_at_end()):
             self.start = self.current
             self.scan_token()
@@ -431,11 +439,23 @@ class Parser():
         self.consume(TokenType.RIGHT_BRACE, "Expect '}' after block.")
         return statements
 
+    def if_statement(self):
+        self.consume(TokenType.LEFT_PAREN, f"expect '(' after if.")
+        condition: Expr.Expr = self.expression()
+        self.consume(TokenType.RIGHT_PAREN, f"unclosed parenthesize.")
+
+        then_branch: Stmt.Stmt = self.statement()
+        else_branch: Stmt.Stmt = self.statement() if self.match(TokenType.ELSE) else None
+
+        return Stmt.If(condition, then_branch, else_branch)
+
     def statement(self):
         if self.match(TokenType.PRINT):
             return self.print_statement()
         elif self.match(TokenType.LEFT_BRACE):
             return Stmt.Block(self.block())
+        elif self.match(TokenType.IF):
+            return self.if_statement()
         else:
             return self.expression_statement()
 
@@ -615,6 +635,14 @@ class Interpreter(Expr.Visitor, Stmt.Visitor):
 
     def visit_block(self, stmt: Stmt.Block):
         self.execute_block(stmt.statements, Environment(self.environment))
+        return None
+
+    def visit_if(self, stmt: Stmt.If):
+        if self.is_truth(self.evaluate(stmt.condition)):
+            self.execute(stmt.then_branch)
+        elif stmt.else_branch:
+            self.execute(stmt.else_branch)
+
         return None
 
 def get_args():
