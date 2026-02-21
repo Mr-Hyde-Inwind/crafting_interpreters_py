@@ -63,3 +63,12 @@ class Assignment(Expr):
 
     def accept(self, visitor: Visitor):
         return visitor.visit_assignment(self)
+
+class Logical(Expr):
+    def __init__(self, left: Expr, operator: Token, right: Expr):
+        self.left = left
+        self.operator = operator
+        self.right = right
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_logical(self)

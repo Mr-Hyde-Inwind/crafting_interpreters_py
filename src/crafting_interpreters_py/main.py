@@ -253,29 +253,6 @@ class Scanner():
         self.tokens.append(Token(TokenType.EOF, "", None, self.line))
         return self.tokens
 
-class AstPrinter(Expr.Visitor):
-    def print(self, expression: Expr):
-        return expression.accept(self)
-
-    def parenthesize(self, name: str, expressions: List[Expr]):
-        str_list = [expr.accept(self) for expr in expressions]
-        return f'({name} {" ".join(str_list)})'
-
-    def visit_literal(self, expression: Expr.Literal):
-        if expression.value == None:
-            return "nil"
-        return str(expression.value)
-    
-    def visit_grouping(self, expression: Expr.Grouping):
-        return self.parenthesize("group", [expression.expression])
-
-    def visit_binary(self, expression: Expr.Binary):
-        return self.parenthesize(expression.operator.lexeme,
-                                 [expression.left, expression.right])
-
-    def visit_unary(self, expression: Expr.Unary):
-        return self.parenthesize(expression.operator.lexeme, [expression.right])
-
 class Parser():
     class ParserError(RuntimeError):
         pass
@@ -323,7 +300,7 @@ class Parser():
         return self.assignment()
 
     def assignment(self) -> Expr:
-        expr: Expr = self.equality()
+        expr: Expr = self.or_expression()
         if self.match(TokenType.EQUAL):
             equals: Token = self.previous()
             value: Expr = self.assignment()
@@ -333,6 +310,26 @@ class Parser():
                 return Expr.Assignment(name, value)
 
             self.error(equals, "Invalid assignment target.")
+
+        return expr
+
+    def or_expression(self) -> Expr.Expr:
+        expr: Expr.Expr = self.and_expression()
+
+        while (self.match(TokenType.OR)):
+            operator: Token = self.previous()
+            right: Expr.Expr = self.and_expression()
+            expr = Expr.Logical(expr, operator, right)
+
+        return expr
+
+    def and_expression(self) -> Expr.Expr:
+        expr: Expr.Expr = self.equality()
+
+        while (self.match(TokenType.AND)):
+            operator: Token = self.previous()
+            right:Expr.Expr = self.equality()
+            expr = Expr.Logical(expr, operator, right)
 
         return expr
 
@@ -482,7 +479,6 @@ class Parser():
         statements = []
         while not self.is_at_end():
             statements.append(self.declaration())
-            #statements.append(self.statement())
 
         return statements
         
@@ -605,6 +601,18 @@ class Interpreter(Expr.Visitor, Stmt.Visitor):
         value: object = self.evaluate(expression.value)
         self.environment.assign(expression.name, value)
         return value
+
+    def visit_logical(self, expression: Expr.Logical):
+        left: object = self.evaluate(expression.left)
+
+        if expression.operator.token_type == TokenType.OR:
+            if self.is_truth(left):
+                return left
+        else:
+            if not self.is_truth(left):
+                return left
+
+        return self.evaluate(expression.right)
 
     def visit_expression_stmt(self, stmt: Stmt.Expression):
         self.evaluate(stmt.expression)
