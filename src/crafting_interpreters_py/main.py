@@ -321,7 +321,6 @@ class Parser():
 
     def expression(self) -> Expr:
         return self.assignment()
-        return self.equality()
 
     def assignment(self) -> Expr:
         expr: Expr = self.equality()
@@ -514,7 +513,7 @@ class Interpreter(Expr.Visitor, Stmt.Visitor):
             return False
         if isinstance(obj, bool):
             return obj
-        return True
+        return bool(obj)
 
     def is_equal(self, a, b):
         if a == None and b == None:
