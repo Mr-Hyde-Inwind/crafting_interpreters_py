@@ -54,3 +54,12 @@ class If(Stmt):
 
     def accept(self, visitor: Visitor):
         return visitor.visit_if(self)
+
+class While(Stmt):
+    def __init__(self, condition: Expr.Expr, body: Stmt):
+        self.condition = condition
+        self.body = body
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_while(self)
+

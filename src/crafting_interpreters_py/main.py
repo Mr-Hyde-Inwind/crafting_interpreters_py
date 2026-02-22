@@ -91,7 +91,7 @@ class Environment():
         if name_token.lexeme in self.values:
             return self.values[name_token.lexeme]
         elif self.enclosing:
-            return self.enclosing.get(name)
+            return self.enclosing.get(name_token)
         else:
             raise RuntimeException(name_token, f'Undefined variable {name_token.lexeme}.')
 
@@ -445,6 +445,49 @@ class Parser():
 
         return Stmt.If(condition, then_branch, else_branch)
 
+    def while_statement(self):
+        self.consume(TokenType.LEFT_PAREN, f"expect '(' after while.")
+        condition: Expr.Expr = self.expression()
+        self.consume(TokenType.RIGHT_PAREN, f"unclosed parenthesize.")
+        body: Stmt.Stmt = self.statement()
+
+        return Stmt.While(condition, body)
+
+    def for_statement(self):
+        self.consume(TokenType.LEFT_PAREN, f"Expect '(' after for.")
+
+        initializer: Stmt.Stmt|None = None
+        if self.match(TokenType.SEMICOLON):
+            initializer = None
+        elif self.match(TokenType.VAR):
+            initializer = self.var_declaration()
+        else:
+            initializer = self.expression_statement()
+
+        condition: Expr.Expr|None = None
+        if not self.check(TokenType.SEMICOLON):
+            condition = self.expression()
+        self.consume(TokenType.SEMICOLON, f"Expect ';' after loop condition.")
+
+        increment: Expr.Expr|None = None
+        if not self.check(TokenType.RIGHT_PAREN):
+            increment = self.expression()
+        self.consume(TokenType.RIGHT_PAREN, f"Expect ')' after for clauses.")
+
+        body: Stmt.Stmt = self.statement()
+
+        if increment:
+            body = Stmt.Block([body, Stmt.Expression(increment)])
+
+        if condition == None:
+            condition = Expr.Literal(True)
+        body = Stmt.While(condition, body)
+
+        if initializer:
+            body = Stmt.Block([initializer, body])
+
+        return body
+
     def statement(self):
         if self.match(TokenType.PRINT):
             return self.print_statement()
@@ -452,6 +495,10 @@ class Parser():
             return Stmt.Block(self.block())
         elif self.match(TokenType.IF):
             return self.if_statement()
+        elif self.match(TokenType.WHILE):
+            return self.while_statement()
+        elif self.match(TokenType.FOR):
+            return self.for_statement()
         else:
             return self.expression_statement()
 
@@ -649,6 +696,12 @@ class Interpreter(Expr.Visitor, Stmt.Visitor):
             self.execute(stmt.then_branch)
         elif stmt.else_branch:
             self.execute(stmt.else_branch)
+
+        return None
+
+    def visit_while(self, stmt: Stmt.While):
+        while self.is_truth(self.evaluate(stmt.condition)):
+            self.execute(stmt.body)
 
         return None
 
