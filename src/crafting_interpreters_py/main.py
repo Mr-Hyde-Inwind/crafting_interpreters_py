@@ -1,49 +1,16 @@
+from __future__ import annotations
 import argparse
-import operator
 from pathlib import Path
-from enum import Enum, auto
 from typing import List, Dict
-from abc import ABC, abstractmethod
+
+from .token import Token, TokenType
 from . import Expr
 from . import Stmt
-
-class TokenType(Enum):
-    LEFT_PAREN = auto(); RIGHT_PAREN = auto()
-    LEFT_BRACE = auto(); RIGHT_BRACE = auto()
-    COMMA = auto(); SEMICOLON = auto(); DOT = auto()
-    MINUS = auto(); PLUS = auto(); SLASH = auto(); STAR = auto()
-
-    BANG = auto(); BANG_EQUAL = auto()
-    EQUAL = auto(); EQUAL_EQUAL = auto()
-    GREATER = auto(); GREATER_EQUAL = auto()
-    LESS = auto(); LESS_EQUAL = auto()
-
-    IDENTIFIER = auto(); STRING = auto(); NUMBER = auto()
-
-    AND = auto(); OR = auto(); NOT = auto()
-    CLASS = auto()
-    IF = auto(); ELSE = auto()
-    FUN = auto(); RETRUN = auto()
-    TRUE = auto(); FALSE = auto()
-    FOR = auto(); WHILE = auto()
-    THIS = auto(); NIL = auto()
-    PRINT = auto()
-    VAR = auto()
-
-    SUPER = auto()
-
-    EOF = auto()
+from .environment import Environment
+from .error import RuntimeException
+from .callable import InterpreterCallable, InterpreterFunction
 
 
-class Token():
-    def __init__(self, token_type: TokenType, lexeme: str, literal, line: int):
-        self.token_type = token_type
-        self.lexeme = lexeme
-        self.literal = literal
-        self.line = line
-
-    def __str__(self):
-        return f'{self.token_type} {self.lexeme} {self.literal}'
 
 had_error = False
 had_runtimeerror = False
@@ -67,33 +34,6 @@ def error(token_or_line: Token|int, message: str) -> None:
             report(token_or_line.line, " at end", message)
         else:
             report(token_or_line.line, f" at '{token_or_line.lexeme}'", message)
-
-class Environment():
-    def __init__(self, enclosing = None):
-        self.values = dict()
-        self.enclosing = enclosing
-
-    def define(self, name: str, value: object):
-        self.values[name] = value
-
-    def assign(self, name: Token, value: object):
-        if name.lexeme in self.values:
-            self.values[name.lexeme] = value
-            return
-
-        if self.enclosing:
-            self.enclosing.assign(name, value)
-            return
-
-        raise RuntimeException(name, f'Undefined variable "{name.lexeme}".')
-
-    def get(self, name_token: Token):
-        if name_token.lexeme in self.values:
-            return self.values[name_token.lexeme]
-        elif self.enclosing:
-            return self.enclosing.get(name_token)
-        else:
-            raise RuntimeException(name_token, f'Undefined variable {name_token.lexeme}.')
 
 class Scanner():
     keywords: Dict[str, TokenType] = {
@@ -275,9 +215,9 @@ class Parser():
             self.current += 1
         return self.previous()
 
-    def check(self, type: TokenType) -> bool:
+    def check(self, type: TokenType) -> bool|None:
         if self.is_at_end():
-            return False
+            return None
         return self.peek().token_type == type
 
     def match(self, *types) -> bool:
@@ -289,6 +229,8 @@ class Parser():
 
     def error(self, token: Token, message: str) -> ParserError:
         error(token, message)
+        # debug
+        #breakpoint()
         return Parser.ParserError()
 
     def consume(self, type: TokenType, message: str):
@@ -296,14 +238,14 @@ class Parser():
             return self.advance()
         raise self.error(self.peek(), message)
 
-    def expression(self) -> Expr:
+    def expression(self) -> Expr.Expr:
         return self.assignment()
 
-    def assignment(self) -> Expr:
-        expr: Expr = self.or_expression()
+    def assignment(self) -> Expr.Expr:
+        expr: Expr.Expr = self.or_expression()
         if self.match(TokenType.EQUAL):
             equals: Token = self.previous()
-            value: Expr = self.assignment()
+            value: Expr.Expr = self.assignment()
 
             if isinstance(expr, Expr.Variable):
                 name: Token = expr.name
@@ -333,52 +275,77 @@ class Parser():
 
         return expr
 
-    def equality(self) -> Expr:
-        expr: Expr = self.comparison()
+    def equality(self) -> Expr.Expr:
+        expr: Expr.Expr = self.comparison()
 
         while self.match(TokenType.BANG, TokenType.BANG_EQUAL):
             operator: Token = self.previous()
-            right: Expr = self.comparison()
+            right: Expr.Expr = self.comparison()
             expr = Expr.Binary(expr, operator, right)
 
         return expr
 
-    def comparison(self) -> Expr:
-        expr: Expr = self.term()
+    def comparison(self) -> Expr.Expr:
+        expr: Expr.Expr = self.term()
         while self.match(TokenType.GREATER, TokenType.GREATER_EQUAL, TokenType.LESS, TokenType.LESS_EQUAL):
             operator: Token = self.previous()
-            right: Expr = self.term()
+            right: Expr.Expr = self.term()
             expr = Expr.Binary(expr, operator, right)
 
         return expr
     
-    def term(self) -> Expr:
-        expr: Expr = self.factor()
+    def term(self) -> Expr.Expr:
+        expr: Expr.Expr = self.factor()
         while self.match(TokenType.PLUS, TokenType.MINUS):
             operator: Token = self.previous()
-            right: Expr = self.factor()
+            right: Expr.Expr = self.factor()
             expr = Expr.Binary(expr, operator, right)
 
         return expr
 
-    def factor(self) -> Expr:
-        expr: Expr = self.unary()
+    def factor(self) -> Expr.Expr:
+        expr: Expr.Expr = self.unary()
         while self.match(TokenType.SLASH, TokenType.STAR):
             operator: Token = self.previous()
-            right: Expr = self.unary()
+            right: Expr.Expr = self.unary()
             expr = Expr.Binary(expr, operator, right)
 
         return expr
 
-    def unary(self) -> Expr:
+    def unary(self) -> Expr.Expr:
         if self.match(TokenType.MINUS, TokenType.BANG):
             operator: Token = self.previous()
-            right: Expr = self.unary()
+            right: Expr.Expr = self.unary()
             return Expr.Unary(operator, right)
         
-        return self.primary()
+        return self.call()
 
-    def primary(self) -> Expr:
+    def call(self):
+        expr: Expr.Expr = self.primary()
+
+        while True:
+            if self.match(TokenType.LEFT_PAREN):
+                expr = self.finish_call(expr)
+            else:
+                break
+
+        return expr
+
+    def finish_call(self, callee: Expr.Expr) -> Expr.Expr:
+        arguments: List[Expr.Expr] = []
+        if not self.check(TokenType.RIGHT_PAREN):
+            while True:
+                if len(arguments) >= 127:
+                    self.error(self.peek(), "Can't have more than 127 arguments.")
+                arguments.append(self.expression())
+                if not self.match(TokenType.COMMA):
+                    break
+
+        paren: Token = self.consume(TokenType.RIGHT_PAREN, "Expect ')' after arguments.")
+        return Expr.Call(callee, paren, arguments)
+
+
+    def primary(self) -> Expr.Expr:
         if self.match(TokenType.TRUE):
             return Expr.Literal(True)
         if self.match(TokenType.FALSE):
@@ -393,7 +360,7 @@ class Parser():
             return Expr.Variable(self.previous())
 
         if self.match(TokenType.LEFT_PAREN):
-            expr: Expr = self.expression()
+            expr: Expr.Expr = self.expression()
             self.consume(TokenType.RIGHT_PAREN, "Expect ')' after expression.")
             return Expr.Grouping(expr)
 
@@ -428,8 +395,8 @@ class Parser():
         self.consume(TokenType.SEMICOLON, "Expect ';' after expression.")
         return Stmt.Expression(expr)
 
-    def block(self) -> List[Stmt]:
-        statements: List[Stmt] = []
+    def block(self) -> List[Stmt.Stmt|None]:
+        statements: List[Stmt.Stmt|None] = []
         while not self.check(TokenType.RIGHT_BRACE):
             statements.append(self.declaration())
         self.consume(TokenType.RIGHT_BRACE, "Expect '}' after block.")
@@ -440,8 +407,8 @@ class Parser():
         condition: Expr.Expr = self.expression()
         self.consume(TokenType.RIGHT_PAREN, f"unclosed parenthesize.")
 
-        then_branch: Stmt.Stmt = self.statement()
-        else_branch: Stmt.Stmt = self.statement() if self.match(TokenType.ELSE) else None
+        then_branch: Stmt.Stmt|None = self.statement()
+        else_branch: Stmt.Stmt|None = self.statement() if self.match(TokenType.ELSE) else None
 
         return Stmt.If(condition, then_branch, else_branch)
 
@@ -505,15 +472,36 @@ class Parser():
     def var_declaration(self) -> Stmt.Stmt:
         name: Token = self.consume(TokenType.IDENTIFIER, "Expect variable name.")
 
-        initializer: Expr.Expr = None
+        initializer: Expr.Expr|None = None
         if self.match(TokenType.EQUAL):
             initializer = self.expression()
 
         self.consume(TokenType.SEMICOLON, "Expect ';' after variable declaration.")
         return Stmt.Var(name, initializer)
 
+    def function(self, kind: str):
+        name: Token = self.consume(TokenType.IDENTIFIER, f"Expect {kind} name.")
+        self.consume(TokenType.LEFT_PAREN, f"Expect '(' after {kind} name.")
+        params: List[Token] = []
+        if not self.check(TokenType.RIGHT_PAREN):
+            while True:
+                if len(params) >= 127:
+                    self.error(self.peek(), "Can't have more than 127 parameters.")
+
+                params.append(self.consume(TokenType.IDENTIFIER, "Expect parameter name."))
+
+                if not self.match(TokenType.COMMA):
+                    break
+        self.consume(TokenType.RIGHT_PAREN, f"Expect ')' after parameters.")
+        self.consume(TokenType.LEFT_BRACE, f"Expect '{{' before {kind} body.")
+
+        body: List[Stmt.Stmt|None] = self.block()
+        return Stmt.Function(name, params, body)
+
     def declaration(self):
         try:
+            if self.match(TokenType.FUN):
+                return self.function("function")
             if self.match(TokenType.VAR):
                 return self.var_declaration()
             else:
@@ -522,23 +510,28 @@ class Parser():
             self.synchronize()
             return None
 
-    def parse(self) -> List[Stmt]:
+    def parse(self) -> List[Stmt.Stmt]:
         statements = []
         while not self.is_at_end():
             statements.append(self.declaration())
 
         return statements
         
-class RuntimeException(RuntimeError):
-    def __init__(self, token: Token, message: str):
-        super().__init__(message)
-        self.token = token
-        
 class Interpreter(Expr.Visitor, Stmt.Visitor):
     def __init__(self):
-        self.environment = Environment()
+        self.globals = Environment()
+        self.environment = self.globals
+
+        # Native Func
+        clock_instance = type("ClockCallable", (InterpreterCallable,), {
+            "arity": lambda self: 0,
+            "call": lambda self, interp, args: __import__('time').time(),
+            "__str__": lambda self: "<native fn>."
+        })()
+        self.globals.define("clock", clock_instance)
+        
     
-    def evaluate(self, expression: Expr):
+    def evaluate(self, expression: Expr.Expr):
         return expression.accept(self)
 
     def execute(self, statement: Stmt.Stmt):
@@ -641,6 +634,23 @@ class Interpreter(Expr.Visitor, Stmt.Visitor):
 
         return None
 
+    def visit_call(self, expr: Expr.Call) -> object:
+        callee: object = self.evaluate(expr.callee)
+
+        arguments: List[object] = []
+        for argument in expr.arguments:
+            arguments.append(self.evaluate(argument))
+
+        if not isinstance(callee, InterpreterCallable):
+            raise RuntimeException(expr.paren, "Can only call functions and classes.")
+
+        #function: InterpreterCallable = InterpreterCallable(callee)
+        function = callee
+        if len(arguments) != function.arity():
+            raise RuntimeException(expr.paren,
+                    f"Expected {function.arity()} arguments but got {len(arguments)}.")
+        return function.call(self, arguments)
+
     def visit_variable(self, expression: Expr.Variable):
         return self.environment.get(expression.name)
 
@@ -676,6 +686,11 @@ class Interpreter(Expr.Visitor, Stmt.Visitor):
             value = self.evaluate(stmt.initializer)
 
         self.environment.define(stmt.name.lexeme, value)
+        return None
+
+    def visit_function(self, stmt: Stmt.Function):
+        function = InterpreterFunction(stmt)
+        self.environment.define(stmt.name.lexeme, function)
         return None
 
     def execute_block(self, statements: List[Stmt.Stmt], environment: Environment):
@@ -743,7 +758,17 @@ def run_prompt() -> None:
         run(interpreter, line)
 
 def run_file(src: str | Path):
-    print(f"Run source code with file: {src}")
+    with open(src, 'r') as f:
+        source = f.read()
+    interpreter: Interpreter = Interpreter()
+    global had_error
+    global had_runtimeerror
+    had_error = False
+    had_runtimeerror = False
+
+    run(interpreter, source)
+
+    #print(f"Run source code with file: {src}")
 
 def main() -> None:
     run_args = get_args()
@@ -752,15 +777,3 @@ def main() -> None:
     else:
         run_file(run_args.file)
 
-def debug() -> None:
-    expression: Expr.Expr = Expr.Binary(
-        Expr.Unary(Token(TokenType.MINUS, '-', None, 1), Expr.Literal(123)),
-        Token(TokenType.STAR, '*', None, 1),
-        Expr.Grouping(Expr.Literal(45.67))
-    )
-
-    print(AstPrinter().print(expression))
-
-if __name__ == '__main__':
-    debug()
-    # main()

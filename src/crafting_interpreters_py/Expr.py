@@ -1,4 +1,6 @@
+from typing import List
 from abc import ABC, abstractmethod
+from .token import Token
 
 class Visitor(ABC):
     @abstractmethod
@@ -13,6 +15,10 @@ class Visitor(ABC):
     def visit_variable(self, expression): pass
     @abstractmethod
     def visit_assignment(self, expression): pass
+    @abstractmethod
+    def visit_logical(self, expression): pass
+    @abstractmethod
+    def visit_call(self, expression): pass
 
 class Expr(ABC):
     @abstractmethod
@@ -72,3 +78,11 @@ class Logical(Expr):
 
     def accept(self, visitor: Visitor):
         return visitor.visit_logical(self)
+class Call(Expr):
+    def __init__(self, callee: Expr, paren: Token, arguments: List[Expr]):
+        self.callee = callee
+        self.paren = paren
+        self.arguments = arguments
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_call(self)
