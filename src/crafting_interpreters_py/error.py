@@ -4,3 +4,8 @@ class RuntimeException(RuntimeError):
     def __init__(self, token: Token, message: str):
         super().__init__(message)
         self.token = token
+
+class Return(RuntimeError):
+    def __init__(self, value: object):
+        self.value = value
+

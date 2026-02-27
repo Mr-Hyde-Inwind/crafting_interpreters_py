@@ -1,7 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import List
-from . import Expr
+from .Expr import Expr
 from .token import Token
 
 class Visitor(ABC):
@@ -33,20 +33,24 @@ class Visitor(ABC):
     def visit_function(self, stmt: Function):
         pass
 
+    @abstractmethod
+    def visit_return(self, stmt: Return):
+        pass
+
 class Stmt(ABC):
     @abstractmethod
     def accept(self, visitor: Visitor):
         pass
 
 class Expression(Stmt):
-    def __init__(self, expression: Expr.Expr):
+    def __init__(self, expression: Expr):
         self.expression = expression
 
     def accept(self, visitor: Visitor):
         return visitor.visit_expression_stmt(self)
 
 class Print(Stmt):
-    def __init__(self, expression: Expr.Expr):
+    def __init__(self, expression: Expr):
         self.expression = expression
 
     def accept(self, visitor: Visitor):
@@ -69,7 +73,7 @@ class Block(Stmt):
         return visitor.visit_block(self)
 
 class If(Stmt):
-    def __init__(self, condition: Expr.Expr, then_branch: Stmt|None, else_branch: Stmt|None):
+    def __init__(self, condition: Expr, then_branch: Stmt|None, else_branch: Stmt|None):
         self.condition = condition
         self.then_branch = then_branch
         self.else_branch = else_branch
@@ -78,7 +82,7 @@ class If(Stmt):
         return visitor.visit_if(self)
 
 class While(Stmt):
-    def __init__(self, condition: Expr.Expr, body: Stmt):
+    def __init__(self, condition: Expr, body: Stmt):
         self.condition = condition
         self.body = body
 
@@ -93,4 +97,13 @@ class Function(Stmt):
 
     def accept(self, visitor: Visitor):
         return visitor.visit_function(self)
+
+class Return(Stmt):
+    def __init__(self, keyword: Token, value: Expr|None):
+        self.keyword = keyword
+        self.value = value
+
+    def accept(self, visitor: Visitor):
+        return visitor.visit_return(self)
+
 

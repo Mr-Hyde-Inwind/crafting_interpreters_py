@@ -7,7 +7,7 @@ from .token import Token, TokenType
 from . import Expr
 from . import Stmt
 from .environment import Environment
-from .error import RuntimeException
+from .error import RuntimeException, Return
 from .callable import InterpreterCallable, InterpreterFunction
 
 
@@ -455,6 +455,15 @@ class Parser():
 
         return body
 
+    def return_statement(self):
+        keyword: Token = self.previous()
+        value: object = None
+        if not self.check(TokenType.SEMICOLON):
+            value = self.expression()
+
+        self.consume(TokenType.SEMICOLON, "Expect ';' after return value.")
+        return Stmt.Return(keyword, value)
+
     def statement(self):
         if self.match(TokenType.PRINT):
             return self.print_statement()
@@ -466,6 +475,8 @@ class Parser():
             return self.while_statement()
         elif self.match(TokenType.FOR):
             return self.for_statement()
+        elif self.match(TokenType.RETRUN):
+            return self.return_statement()
         else:
             return self.expression_statement()
 
@@ -719,6 +730,14 @@ class Interpreter(Expr.Visitor, Stmt.Visitor):
             self.execute(stmt.body)
 
         return None
+
+    def visit_return(self, stmt: Stmt.Return):
+        value = None
+        if stmt.value != None:
+            value = self.evaluate(stmt.value)
+
+        raise Return(value)
+
 
 def get_args():
     parser = argparse.ArgumentParser()
